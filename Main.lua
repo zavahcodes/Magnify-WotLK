@@ -14,10 +14,6 @@ Magnify.worldmapPoiMaxY = nil -- changes based on current scale, see SetPOIMaxBo
 
 Magnify.PLAYER_ARROW_SIZE = 36
 
--- Debug: Track tooltip state
-Magnify.lastTooltipOwner = nil
-Magnify.tooltipCheckTimer = 0
-
 -- If you open the map and the zone was the same, we want to remember the previous state
 Magnify.PreviousState = {
     panX = 0,
@@ -41,7 +37,6 @@ end
 
 local function resizePOI(poiButton)
     if (poiButton) then
-        print("[Magnify Debug] resizePOI called for button:", poiButton:GetName())
         local _, _, _, x, y = poiButton:GetPoint()
         local mapsterScale = 1
         local mapster, mapsterPoiScale = Magnify.GetMapster("poiScale")
@@ -97,7 +92,6 @@ function Magnify.AfterScrollOrPan()
 end
 
 function Magnify.ResizeQuestPOIs()
-    print("[Magnify Debug] ResizeQuestPOIs called")
     local QUEST_POI_MAX_TYPES = 4;
     local POI_TYPE_MAX_BUTTONS = 25;
 
@@ -106,17 +100,17 @@ function Magnify.ResizeQuestPOIs()
             local buttonName = "poiWorldMapPOIFrame" .. i .. "_" .. j;
             local button = _G[buttonName]
             resizePOI(button)
-            -- Hook POI buttons dynamically as they're created
-            if button and not button.magnifyHooked then
-                Magnify.HookPOIButton(button)
+            -- Hook POI buttons dynamically to fix stuck WorldMapTooltip
+            if button and not button.magnifyTooltipFixed then
+                Magnify.FixPOITooltip(button)
             end
         end
     end
 
     local swapButton = QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]
     resizePOI(swapButton)
-    if swapButton and not swapButton.magnifyHooked then
-        Magnify.HookPOIButton(swapButton)
+    if swapButton and not swapButton.magnifyTooltipFixed then
+        Magnify.FixPOITooltip(swapButton)
     end
 end
 
@@ -126,7 +120,6 @@ function Magnify.SetPOIMaxBounds()
 end
 
 function Magnify.SetDetailFrameScale(num)
-    print("[Magnify Debug] SetDetailFrameScale called with scale:", num)
     WorldMapDetailFrame:SetScale(num)
     Magnify.SetPOIMaxBounds() -- Calling Magnify method
 
@@ -330,82 +323,6 @@ function Magnify.ColorWorldMapPartyMemberFrame(partyMemberFrame, unit)
 end
 
 function Magnify.WorldMapButton_OnUpdate(self, elapsed)
-    -- Debug: Check for stuck tooltips periodically
-    Magnify.tooltipCheckTimer = Magnify.tooltipCheckTimer + elapsed
-    if Magnify.tooltipCheckTimer > 0.5 then  -- Check every 0.5 seconds
-        Magnify.tooltipCheckTimer = 0
-        
-        -- Check all possible tooltip frames
-        local tooltipFrames = {
-            GameTooltip,
-            WorldMapTooltip,
-            QuestMapLogDetailScrollChildFrame,
-        }
-        
-        for _, tooltip in ipairs(tooltipFrames) do
-            if tooltip and tooltip:IsShown() then
-                local frameName = tooltip:GetName() or "UnnamedTooltip"
-                local owner = tooltip.GetOwner and tooltip:GetOwner() or nil
-                local ownerName = owner and owner:GetName() or "nil"
-                print("[Magnify Debug] !!! VISIBLE TOOLTIP DETECTED:", frameName, "Owner:", ownerName, "IsMouseOver:", owner and owner:IsMouseOver() or "N/A")
-                
-                -- Special handling for WorldMapTooltip - check if any POI is under the mouse
-                if frameName == "WorldMapTooltip" and ownerName == "WorldMapFrame" then
-                    local mouseOverPOI = false
-                    -- Check all POI buttons
-                    for i = 1, 4 do
-                        for j = 1, 25 do
-                            local poiButton = _G["poiWorldMapPOIFrame" .. i .. "_" .. j]
-                            if poiButton and poiButton:IsShown() and poiButton:IsMouseOver() then
-                                mouseOverPOI = true
-                                break
-                            end
-                        end
-                        if mouseOverPOI then break end
-                    end
-                    
-                    -- Check swap button
-                    if not mouseOverPOI then
-                        local swapButton = _G["poiWorldMapPOIFrame_Swap"]
-                        if swapButton and swapButton:IsShown() and swapButton:IsMouseOver() then
-                            mouseOverPOI = true
-                        end
-                    end
-                    
-                    if not mouseOverPOI then
-                        print("[Magnify Debug] !!! STUCK WorldMapTooltip - No POI under mouse, forcing hide")
-                        tooltip:Hide()
-                    end
-                end
-                
-                -- Check if the owner is a POI button
-                if ownerName and (string.find(ownerName, "poiWorldMapPOIFrame") or ownerName == "poiWorldMapPOIFrame_Swap") then
-                    -- Check if mouse is still over the POI
-                    if owner and not owner:IsMouseOver() then
-                        print("[Magnify Debug] !!! STUCK TOOLTIP - Forcing hide on:", frameName)
-                        tooltip:Hide()
-                    end
-                end
-            end
-        end
-        
-        -- Also check if GameTooltip is shown
-        if GameTooltip:IsShown() then
-            local owner = GameTooltip:GetOwner()
-            local ownerName = owner and owner:GetName() or "nil"
-            
-            -- Check if the owner is a POI button
-            if ownerName and (string.find(ownerName, "poiWorldMapPOIFrame") or ownerName == "poiWorldMapPOIFrame_Swap") then
-                -- Check if mouse is still over the POI
-                if owner and not owner:IsMouseOver() then
-                    print("[Magnify Debug] !!! STUCK TOOLTIP DETECTED !!! Owner:", ownerName, "Mouse over owner:", false)
-                    print("[Magnify Debug] !!! Forcing tooltip hide")
-                    GameTooltip:Hide()
-                end
-            end
-        end
-    end
-    
     local x, y = GetCursorPosition();
     x = x / self:GetEffectiveScale();
     y = y / self:GetEffectiveScale();
@@ -616,7 +533,6 @@ function Magnify.WorldMapButton_OnUpdate(self, elapsed)
 end
 
 function Magnify.WorldMapScrollFrame_OnMouseWheel()
-    print("[Magnify Debug] OnMouseWheel triggered, GameTooltip visible:", GameTooltip:IsShown())
     if (IsControlKeyDown() and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE) then
         local oldScale = WorldMapFrame:GetScale()
         local newScale = oldScale + arg1 * Magnify.MINIMODE_ZOOM_STEP
@@ -625,7 +541,6 @@ function Magnify.WorldMapScrollFrame_OnMouseWheel()
 
         WorldMapFrame:SetScale(newScale)
         WorldMapScreenAnchor.preferredMinimodeScale = newScale
-        print("[Magnify Debug] MiniMode scale changed to:", newScale)
         return
     end
 
@@ -663,12 +578,10 @@ function Magnify.WorldMapScrollFrame_OnMouseWheel()
 
     this:SetHorizontalScroll(newScrollH)
     this:SetVerticalScroll(newScrollV)
-    print("[Magnify Debug] Zoom completed, new scale:", newScale)
     Magnify.AfterScrollOrPan()
 end
 
 function Magnify.WorldMapButton_OnMouseDown()
-    print("[Magnify Debug] WorldMapButton_OnMouseDown, GameTooltip visible:", GameTooltip:IsShown())
     if arg1 == 'LeftButton' and WorldMapScrollFrame.zoomedIn then
         WorldMapScrollFrame.panning = true
 
@@ -683,7 +596,6 @@ function Magnify.WorldMapButton_OnMouseDown()
 end
 
 function Magnify.WorldMapButton_OnMouseUp()
-    print("[Magnify Debug] WorldMapButton_OnMouseUp, GameTooltip visible:", GameTooltip:IsShown())
     WorldMapScrollFrame.panning = false
 
     if not WorldMapScrollFrame.moved then
@@ -720,156 +632,42 @@ function Magnify.CreateClassColorIcon(partyMemberFrame)
     end
 end
 
-function Magnify.HookPOIButton(button)
-    if button and not button.magnifyHooked then
-        button.magnifyHooked = true
-        print("[Magnify Debug] Hooking POI button:", button:GetName())
+-- Fix for stuck WorldMapTooltip on POI mouseover
+function Magnify.FixPOITooltip(button)
+    if button and not button.magnifyTooltipFixed then
+        button.magnifyTooltipFixed = true
         
-        -- Store original scripts if they exist
-        local originalOnEnter = button:GetScript("OnEnter")
+        -- Store original OnLeave script
         local originalOnLeave = button:GetScript("OnLeave")
-        local originalOnUpdate = button:GetScript("OnUpdate")
         
-        print("[Magnify Debug]   - Has OnEnter script:", originalOnEnter ~= nil)
-        print("[Magnify Debug]   - Has OnLeave script:", originalOnLeave ~= nil)
-        print("[Magnify Debug]   - Has OnUpdate script:", originalOnUpdate ~= nil)
-        
-        button:SetScript("OnEnter", function(self)
-            print("[Magnify Debug] *** POI OnEnter:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
-            if originalOnEnter then
-                originalOnEnter(self)
-            end
-            print("[Magnify Debug] *** After OnEnter, GameTooltip:IsShown():", GameTooltip:IsShown(), "Owner:", GameTooltip:GetOwner() and GameTooltip:GetOwner():GetName() or "nil")
-            
-            -- Schedule a check after a short delay to see what tooltip appeared
-            self.tooltipCheckTime = GetTime() + 0.1
-        end)
-        
+        -- Override OnLeave to force hide WorldMapTooltip
         button:SetScript("OnLeave", function(self)
-            print("[Magnify Debug] *** POI OnLeave:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
             if originalOnLeave then
                 originalOnLeave(self)
             end
-            print("[Magnify Debug] *** After OnLeave, GameTooltip:IsShown():", GameTooltip:IsShown())
             
-            -- FIX: Force hide WorldMapTooltip when leaving POI
+            -- Force hide WorldMapTooltip when leaving POI to prevent stuck tooltip
             if WorldMapTooltip and WorldMapTooltip:IsShown() then
-                print("[Magnify Debug] *** Forcing WorldMapTooltip:Hide() on POI leave")
                 WorldMapTooltip:Hide()
             end
             
-            -- Also hide GameTooltip if it's still showing and owned by this button
+            -- Also hide GameTooltip if it's owned by this button
             if GameTooltip:IsShown() then
                 local owner = GameTooltip:GetOwner()
-                print("[Magnify Debug] *** Tooltip still visible! Owner:", owner and owner:GetName() or "nil", "Self:", self:GetName())
                 if owner == self then
-                    print("[Magnify Debug] *** Forcing GameTooltip:Hide()")
                     GameTooltip:Hide()
                 end
             end
         end)
-        
-        -- Hook OnUpdate to catch tooltip appearance
-        local newOnUpdate = function(self, elapsed)
-            if originalOnUpdate then
-                originalOnUpdate(self, elapsed)
-            end
-            
-            -- Check for tooltip appearance after OnEnter
-            if self.tooltipCheckTime and GetTime() >= self.tooltipCheckTime then
-                self.tooltipCheckTime = nil
-                
-                -- Search for any visible tooltip-like frames
-                print("[Magnify Debug] === Searching for visible tooltips after OnEnter...")
-                
-                -- Check common tooltip frames
-                local tooltipsToCheck = {
-                    "GameTooltip",
-                    "WorldMapTooltip", 
-                    "QuestMapLogDetailScrollChildFrame",
-                    "ShoppingTooltip1",
-                    "ShoppingTooltip2",
-                }
-                
-                for _, name in ipairs(tooltipsToCheck) do
-                    local frame = _G[name]
-                    if frame and frame:IsShown() then
-                        print("[Magnify Debug] === FOUND VISIBLE:", name, "Owner:", frame.GetOwner and frame:GetOwner() and frame:GetOwner():GetName() or "N/A")
-                    end
-                end
-                
-                -- Also check WorldMapFrame children for visible frames
-                local found = false
-                for i = 1, WorldMapFrame:GetNumChildren() do
-                    local child = select(i, WorldMapFrame:GetChildren())
-                    if child and child:IsShown() and child:GetObjectType() == "Frame" then
-                        local childName = child:GetName()
-                        if childName and (string.find(childName:lower(), "tooltip") or string.find(childName:lower(), "poi")) then
-                            print("[Magnify Debug] === FOUND WORLDMAP CHILD:", childName, "Type:", child:GetObjectType())
-                            found = true
-                        end
-                    end
-                end
-                
-                if not found then
-                    print("[Magnify Debug] === No visible tooltips found!")
-                end
-            end
-            
-            -- Check if tooltip appeared
-            if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
-                if not self.magnifyTooltipShown then
-                    self.magnifyTooltipShown = true
-                    print("[Magnify Debug] !!! Tooltip appeared via OnUpdate for:", self:GetName())
-                end
-            else
-                self.magnifyTooltipShown = false
-            end
-        end
-        
-        button:SetScript("OnUpdate", newOnUpdate)
     end
 end
 
 function Magnify.OnFirstLoad()
-    print("[Magnify Debug] OnFirstLoad started")
     -- Make sure all settings got initalized
     MagnifyOptions.enablePersistZoom = MagnifyOptions.enablePersistZoom or Magnify.ENABLEPERSISTZOOM_DEFAULT
     MagnifyOptions.enableOldPartyIcons = MagnifyOptions.enableOldPartyIcons or Magnify.ENABLEOLDPARTYICONS_DEFAULT
     MagnifyOptions.maxZoom = MagnifyOptions.maxZoom or Magnify.MAXZOOM_DEFAULT
     MagnifyOptions.zoomStep = MagnifyOptions.zoomStep or Magnify.ZOOMSTEP_DEFAULT
-
-    -- Debug: Hook GameTooltip to track when it's shown/hidden
-    local originalShow = GameTooltip.Show
-    local originalHide = GameTooltip.Hide
-    local originalSetOwner = GameTooltip.SetOwner
-    
-    GameTooltip.Show = function(self)
-        local owner = self:GetOwner()
-        local ownerName = owner and owner:GetName() or "nil"
-        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
-            print("[Magnify Debug] >>> GameTooltip:Show() called for POI:", ownerName)
-            print("[Magnify Debug] >>> Stack trace:", debugstack(2, 3, 3))
-        end
-        return originalShow(self)
-    end
-    
-    GameTooltip.Hide = function(self)
-        local owner = self:GetOwner()
-        local ownerName = owner and owner:GetName() or "nil"
-        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
-            print("[Magnify Debug] <<< GameTooltip:Hide() called for POI:", ownerName)
-        end
-        return originalHide(self)
-    end
-    
-    GameTooltip.SetOwner = function(self, owner, ...)
-        local ownerName = owner and owner:GetName() or "nil"
-        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
-            print("[Magnify Debug] >>> GameTooltip:SetOwner() called for POI:", ownerName)
-        end
-        return originalSetOwner(self, owner, ...)
-    end
 
     WorldMapScrollFrame:SetScrollChild(WorldMapDetailFrame)
     WorldMapScrollFrame:SetScript("OnMouseWheel", Magnify.WorldMapScrollFrame_OnMouseWheel)
@@ -937,17 +735,17 @@ function Magnify.OnFirstLoad()
 
     local original_WorldMapFrame_OnShow = WorldMapFrame:GetScript("OnShow")
     WorldMapFrame:SetScript("OnShow", function(self)
-        print("[Magnify Debug] WorldMapFrame OnShow triggered")
         original_WorldMapFrame_OnShow(self)
         Magnify.SetupWorldMapFrame()
     end)
     
-    -- Add OnHide handler to cleanup tooltips
+    -- Cleanup tooltips when map is closed
     local original_WorldMapFrame_OnHide = WorldMapFrame:GetScript("OnHide")
     WorldMapFrame:SetScript("OnHide", function(self)
-        print("[Magnify Debug] WorldMapFrame OnHide triggered, GameTooltip visible:", GameTooltip:IsShown())
+        if WorldMapTooltip and WorldMapTooltip:IsShown() then
+            WorldMapTooltip:Hide()
+        end
         if GameTooltip:IsShown() then
-            print("[Magnify Debug] Forcing GameTooltip:Hide() on map close")
             GameTooltip:Hide()
         end
         if original_WorldMapFrame_OnHide then
@@ -960,10 +758,6 @@ function Magnify.OnFirstLoad()
         Magnify.CreateClassColorIcon(_G["WorldMapParty" .. i]);
         Magnify.CreateClassColorIcon(_G["WorldMapRaid" .. i]);
     end
-    
-    -- Debug: Hook POI button events to track tooltip behavior
-    -- Note: POI buttons are created dynamically, so we hook them in ResizeQuestPOIs()
-    print("[Magnify Debug] OnFirstLoad completed - POI hooks will be added dynamically")
 end
 
 function Magnify.OnEvent(self, event, addonName)
