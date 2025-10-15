@@ -47,10 +47,19 @@ local function resizePOI(poiButton)
         end
         if x ~= nil and y ~= nil then
             local s = WORLDMAP_SETTINGS.size / WorldMapDetailFrame:GetEffectiveScale() * (mapsterScale or 1)
+            
+            -- Check if YATP is managing POI scales and apply its multiplier
+            local yatpScale = 1.0
+            if poiButton.yatp_scaleMultiplier then
+                yatpScale = poiButton.yatp_scaleMultiplier
+            end
 
             local posX = x * 1 / s
             local posY = y * 1 / s
-            poiButton:SetScale(s)
+            
+            -- Apply Magnify's scale multiplied by YATP's scale multiplier
+            poiButton:SetScale(s * yatpScale)
+            
             poiButton:SetPoint("CENTER", poiButton:GetParent(), "TOPLEFT", posX, posY)
 
             if (posY > Magnify.WORLDMAP_POI_MIN_Y) then
@@ -89,11 +98,20 @@ function Magnify.ResizeQuestPOIs()
     for i = 1, QUEST_POI_MAX_TYPES do
         for j = 1, POI_TYPE_MAX_BUTTONS do
             local buttonName = "poiWorldMapPOIFrame" .. i .. "_" .. j;
-            resizePOI(_G[buttonName])
+            local button = _G[buttonName]
+            resizePOI(button)
+            -- Hook POI buttons dynamically to fix stuck WorldMapTooltip
+            if button and not button.magnifyTooltipFixed then
+                Magnify.FixPOITooltip(button)
+            end
         end
     end
 
-    resizePOI(QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"])
+    local swapButton = QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]
+    resizePOI(swapButton)
+    if swapButton and not swapButton.magnifyTooltipFixed then
+        Magnify.FixPOITooltip(swapButton)
+    end
 end
 
 function Magnify.SetPOIMaxBounds()
@@ -255,11 +273,11 @@ function Magnify.SetupWorldMapFrame()
     WorldMapButton:SetParent(WorldMapDetailFrame)
 
     WorldMapPOIFrame:SetParent(WorldMapDetailFrame)
-    -- DO NOT reparent WorldMapBlobFrame: doing so causes taint leading to
-    -- "AddOn 'Magnify-WotLK' prevented the call of the secure function 'WorldMapBlobFrame:SetParent()'".
-    -- We'll just anchor it without changing its parent to avoid taint issues.
-    WorldMapBlobFrame:ClearAllPoints()
-    WorldMapBlobFrame:SetAllPoints(WorldMapDetailFrame)
+    -- DO NOT reparent or manipulate WorldMapBlobFrame points: doing so causes taint leading to
+    -- "AddOn 'Magnify-WotLK' prevented the call of the secure function 'WorldMapBlobFrame:ClearAllPoints()'".
+    -- WorldMapBlobFrame will maintain its default anchoring to avoid taint issues.
+    -- WorldMapBlobFrame:ClearAllPoints()
+    -- WorldMapBlobFrame:SetAllPoints(WorldMapDetailFrame)
 
     WorldMapPlayer:SetParent(WorldMapDetailFrame)
 
@@ -614,6 +632,36 @@ function Magnify.CreateClassColorIcon(partyMemberFrame)
     end
 end
 
+-- Fix for stuck WorldMapTooltip on POI mouseover
+function Magnify.FixPOITooltip(button)
+    if button and not button.magnifyTooltipFixed then
+        button.magnifyTooltipFixed = true
+        
+        -- Store original OnLeave script
+        local originalOnLeave = button:GetScript("OnLeave")
+        
+        -- Override OnLeave to force hide WorldMapTooltip
+        button:SetScript("OnLeave", function(self)
+            if originalOnLeave then
+                originalOnLeave(self)
+            end
+            
+            -- Force hide WorldMapTooltip when leaving POI to prevent stuck tooltip
+            if WorldMapTooltip and WorldMapTooltip:IsShown() then
+                WorldMapTooltip:Hide()
+            end
+            
+            -- Also hide GameTooltip if it's owned by this button
+            if GameTooltip:IsShown() then
+                local owner = GameTooltip:GetOwner()
+                if owner == self then
+                    GameTooltip:Hide()
+                end
+            end
+        end)
+    end
+end
+
 function Magnify.OnFirstLoad()
     -- Make sure all settings got initalized
     MagnifyOptions.enablePersistZoom = MagnifyOptions.enablePersistZoom or Magnify.ENABLEPERSISTZOOM_DEFAULT
@@ -689,6 +737,20 @@ function Magnify.OnFirstLoad()
     WorldMapFrame:SetScript("OnShow", function(self)
         original_WorldMapFrame_OnShow(self)
         Magnify.SetupWorldMapFrame()
+    end)
+    
+    -- Cleanup tooltips when map is closed
+    local original_WorldMapFrame_OnHide = WorldMapFrame:GetScript("OnHide")
+    WorldMapFrame:SetScript("OnHide", function(self)
+        if WorldMapTooltip and WorldMapTooltip:IsShown() then
+            WorldMapTooltip:Hide()
+        end
+        if GameTooltip:IsShown() then
+            GameTooltip:Hide()
+        end
+        if original_WorldMapFrame_OnHide then
+            original_WorldMapFrame_OnHide(self)
+        end
     end)
 
     -- Create class color textures for party and raid frames
