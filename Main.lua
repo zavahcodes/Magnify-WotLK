@@ -14,6 +14,10 @@ Magnify.worldmapPoiMaxY = nil -- changes based on current scale, see SetPOIMaxBo
 
 Magnify.PLAYER_ARROW_SIZE = 36
 
+-- Debug: Track tooltip state
+Magnify.lastTooltipOwner = nil
+Magnify.tooltipCheckTimer = 0
+
 -- If you open the map and the zone was the same, we want to remember the previous state
 Magnify.PreviousState = {
     panX = 0,
@@ -100,11 +104,20 @@ function Magnify.ResizeQuestPOIs()
     for i = 1, QUEST_POI_MAX_TYPES do
         for j = 1, POI_TYPE_MAX_BUTTONS do
             local buttonName = "poiWorldMapPOIFrame" .. i .. "_" .. j;
-            resizePOI(_G[buttonName])
+            local button = _G[buttonName]
+            resizePOI(button)
+            -- Hook POI buttons dynamically as they're created
+            if button and not button.magnifyHooked then
+                Magnify.HookPOIButton(button)
+            end
         end
     end
 
-    resizePOI(QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"])
+    local swapButton = QUEST_POI_SWAP_BUTTONS["WorldMapPOIFrame"]
+    resizePOI(swapButton)
+    if swapButton and not swapButton.magnifyHooked then
+        Magnify.HookPOIButton(swapButton)
+    end
 end
 
 function Magnify.SetPOIMaxBounds()
@@ -317,6 +330,26 @@ function Magnify.ColorWorldMapPartyMemberFrame(partyMemberFrame, unit)
 end
 
 function Magnify.WorldMapButton_OnUpdate(self, elapsed)
+    -- Debug: Check for stuck tooltips periodically
+    Magnify.tooltipCheckTimer = Magnify.tooltipCheckTimer + elapsed
+    if Magnify.tooltipCheckTimer > 0.5 then  -- Check every 0.5 seconds
+        Magnify.tooltipCheckTimer = 0
+        if GameTooltip:IsShown() then
+            local owner = GameTooltip:GetOwner()
+            local ownerName = owner and owner:GetName() or "nil"
+            
+            -- Check if the owner is a POI button
+            if ownerName and (string.find(ownerName, "poiWorldMapPOIFrame") or ownerName == "poiWorldMapPOIFrame_Swap") then
+                -- Check if mouse is still over the POI
+                if owner and not owner:IsMouseOver() then
+                    print("[Magnify Debug] !!! STUCK TOOLTIP DETECTED !!! Owner:", ownerName, "Mouse over owner:", false)
+                    print("[Magnify Debug] !!! Forcing tooltip hide")
+                    GameTooltip:Hide()
+                end
+            end
+        end
+    end
+    
     local x, y = GetCursorPosition();
     x = x / self:GetEffectiveScale();
     y = y / self:GetEffectiveScale();
@@ -631,6 +664,42 @@ function Magnify.CreateClassColorIcon(partyMemberFrame)
     end
 end
 
+function Magnify.HookPOIButton(button)
+    if button and not button.magnifyHooked then
+        button.magnifyHooked = true
+        print("[Magnify Debug] Hooking POI button:", button:GetName())
+        
+        -- Store original scripts if they exist
+        local originalOnEnter = button:GetScript("OnEnter")
+        local originalOnLeave = button:GetScript("OnLeave")
+        
+        button:SetScript("OnEnter", function(self)
+            print("[Magnify Debug] *** POI OnEnter:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
+            if originalOnEnter then
+                originalOnEnter(self)
+            end
+            print("[Magnify Debug] *** After OnEnter, GameTooltip:IsShown():", GameTooltip:IsShown(), "Owner:", GameTooltip:GetOwner() and GameTooltip:GetOwner():GetName() or "nil")
+        end)
+        
+        button:SetScript("OnLeave", function(self)
+            print("[Magnify Debug] *** POI OnLeave:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
+            if originalOnLeave then
+                originalOnLeave(self)
+            end
+            print("[Magnify Debug] *** After OnLeave, GameTooltip:IsShown():", GameTooltip:IsShown())
+            -- Force hide tooltip if it's still showing and owned by this button
+            if GameTooltip:IsShown() then
+                local owner = GameTooltip:GetOwner()
+                print("[Magnify Debug] *** Tooltip still visible! Owner:", owner and owner:GetName() or "nil", "Self:", self:GetName())
+                if owner == self then
+                    print("[Magnify Debug] *** Forcing GameTooltip:Hide()")
+                    GameTooltip:Hide()
+                end
+            end
+        end)
+    end
+end
+
 function Magnify.OnFirstLoad()
     print("[Magnify Debug] OnFirstLoad started")
     -- Make sure all settings got initalized
@@ -730,48 +799,8 @@ function Magnify.OnFirstLoad()
     end
     
     -- Debug: Hook POI button events to track tooltip behavior
-    print("[Magnify Debug] Setting up POI button event hooks")
-    local function hookPOIButton(button)
-        if button and not button.magnifyHooked then
-            button.magnifyHooked = true
-            
-            -- Store original scripts if they exist
-            local originalOnEnter = button:GetScript("OnEnter")
-            local originalOnLeave = button:GetScript("OnLeave")
-            
-            button:SetScript("OnEnter", function(self)
-                print("[Magnify Debug] POI OnEnter:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
-                if originalOnEnter then
-                    originalOnEnter(self)
-                end
-            end)
-            
-            button:SetScript("OnLeave", function(self)
-                print("[Magnify Debug] POI OnLeave:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
-                if originalOnLeave then
-                    originalOnLeave(self)
-                end
-                -- Force hide tooltip
-                if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
-                    print("[Magnify Debug] Forcing GameTooltip:Hide()")
-                    GameTooltip:Hide()
-                end
-            end)
-        end
-    end
-    
-    -- Hook existing POI buttons
-    for i = 1, 4 do
-        for j = 1, 25 do
-            local buttonName = "poiWorldMapPOIFrame" .. i .. "_" .. j
-            local button = _G[buttonName]
-            if button then
-                hookPOIButton(button)
-            end
-        end
-    end
-    
-    print("[Magnify Debug] OnFirstLoad completed")
+    -- Note: POI buttons are created dynamically, so we hook them in ResizeQuestPOIs()
+    print("[Magnify Debug] OnFirstLoad completed - POI hooks will be added dynamically")
 end
 
 function Magnify.OnEvent(self, event, addonName)
