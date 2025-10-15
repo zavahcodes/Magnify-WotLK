@@ -37,6 +37,7 @@ end
 
 local function resizePOI(poiButton)
     if (poiButton) then
+        print("[Magnify Debug] resizePOI called for button:", poiButton:GetName())
         local _, _, _, x, y = poiButton:GetPoint()
         local mapsterScale = 1
         local mapster, mapsterPoiScale = Magnify.GetMapster("poiScale")
@@ -47,10 +48,19 @@ local function resizePOI(poiButton)
         end
         if x ~= nil and y ~= nil then
             local s = WORLDMAP_SETTINGS.size / WorldMapDetailFrame:GetEffectiveScale() * (mapsterScale or 1)
+            
+            -- Check if YATP is managing POI scales and apply its multiplier
+            local yatpScale = 1.0
+            if poiButton.yatp_scaleMultiplier then
+                yatpScale = poiButton.yatp_scaleMultiplier
+            end
 
             local posX = x * 1 / s
             local posY = y * 1 / s
-            poiButton:SetScale(s)
+            
+            -- Apply Magnify's scale multiplied by YATP's scale multiplier
+            poiButton:SetScale(s * yatpScale)
+            
             poiButton:SetPoint("CENTER", poiButton:GetParent(), "TOPLEFT", posX, posY)
 
             if (posY > Magnify.WORLDMAP_POI_MIN_Y) then
@@ -83,6 +93,7 @@ function Magnify.AfterScrollOrPan()
 end
 
 function Magnify.ResizeQuestPOIs()
+    print("[Magnify Debug] ResizeQuestPOIs called")
     local QUEST_POI_MAX_TYPES = 4;
     local POI_TYPE_MAX_BUTTONS = 25;
 
@@ -102,6 +113,7 @@ function Magnify.SetPOIMaxBounds()
 end
 
 function Magnify.SetDetailFrameScale(num)
+    print("[Magnify Debug] SetDetailFrameScale called with scale:", num)
     WorldMapDetailFrame:SetScale(num)
     Magnify.SetPOIMaxBounds() -- Calling Magnify method
 
@@ -255,11 +267,11 @@ function Magnify.SetupWorldMapFrame()
     WorldMapButton:SetParent(WorldMapDetailFrame)
 
     WorldMapPOIFrame:SetParent(WorldMapDetailFrame)
-    -- DO NOT reparent WorldMapBlobFrame: doing so causes taint leading to
-    -- "AddOn 'Magnify-WotLK' prevented the call of the secure function 'WorldMapBlobFrame:SetParent()'".
-    -- We'll just anchor it without changing its parent to avoid taint issues.
-    WorldMapBlobFrame:ClearAllPoints()
-    WorldMapBlobFrame:SetAllPoints(WorldMapDetailFrame)
+    -- DO NOT reparent or manipulate WorldMapBlobFrame points: doing so causes taint leading to
+    -- "AddOn 'Magnify-WotLK' prevented the call of the secure function 'WorldMapBlobFrame:ClearAllPoints()'".
+    -- WorldMapBlobFrame will maintain its default anchoring to avoid taint issues.
+    -- WorldMapBlobFrame:ClearAllPoints()
+    -- WorldMapBlobFrame:SetAllPoints(WorldMapDetailFrame)
 
     WorldMapPlayer:SetParent(WorldMapDetailFrame)
 
@@ -515,6 +527,7 @@ function Magnify.WorldMapButton_OnUpdate(self, elapsed)
 end
 
 function Magnify.WorldMapScrollFrame_OnMouseWheel()
+    print("[Magnify Debug] OnMouseWheel triggered, GameTooltip visible:", GameTooltip:IsShown())
     if (IsControlKeyDown() and WORLDMAP_SETTINGS.size == WORLDMAP_WINDOWED_SIZE) then
         local oldScale = WorldMapFrame:GetScale()
         local newScale = oldScale + arg1 * Magnify.MINIMODE_ZOOM_STEP
@@ -523,6 +536,7 @@ function Magnify.WorldMapScrollFrame_OnMouseWheel()
 
         WorldMapFrame:SetScale(newScale)
         WorldMapScreenAnchor.preferredMinimodeScale = newScale
+        print("[Magnify Debug] MiniMode scale changed to:", newScale)
         return
     end
 
@@ -560,10 +574,12 @@ function Magnify.WorldMapScrollFrame_OnMouseWheel()
 
     this:SetHorizontalScroll(newScrollH)
     this:SetVerticalScroll(newScrollV)
+    print("[Magnify Debug] Zoom completed, new scale:", newScale)
     Magnify.AfterScrollOrPan()
 end
 
 function Magnify.WorldMapButton_OnMouseDown()
+    print("[Magnify Debug] WorldMapButton_OnMouseDown, GameTooltip visible:", GameTooltip:IsShown())
     if arg1 == 'LeftButton' and WorldMapScrollFrame.zoomedIn then
         WorldMapScrollFrame.panning = true
 
@@ -578,6 +594,7 @@ function Magnify.WorldMapButton_OnMouseDown()
 end
 
 function Magnify.WorldMapButton_OnMouseUp()
+    print("[Magnify Debug] WorldMapButton_OnMouseUp, GameTooltip visible:", GameTooltip:IsShown())
     WorldMapScrollFrame.panning = false
 
     if not WorldMapScrollFrame.moved then
@@ -615,6 +632,7 @@ function Magnify.CreateClassColorIcon(partyMemberFrame)
 end
 
 function Magnify.OnFirstLoad()
+    print("[Magnify Debug] OnFirstLoad started")
     -- Make sure all settings got initalized
     MagnifyOptions.enablePersistZoom = MagnifyOptions.enablePersistZoom or Magnify.ENABLEPERSISTZOOM_DEFAULT
     MagnifyOptions.enableOldPartyIcons = MagnifyOptions.enableOldPartyIcons or Magnify.ENABLEOLDPARTYICONS_DEFAULT
@@ -687,8 +705,22 @@ function Magnify.OnFirstLoad()
 
     local original_WorldMapFrame_OnShow = WorldMapFrame:GetScript("OnShow")
     WorldMapFrame:SetScript("OnShow", function(self)
+        print("[Magnify Debug] WorldMapFrame OnShow triggered")
         original_WorldMapFrame_OnShow(self)
         Magnify.SetupWorldMapFrame()
+    end)
+    
+    -- Add OnHide handler to cleanup tooltips
+    local original_WorldMapFrame_OnHide = WorldMapFrame:GetScript("OnHide")
+    WorldMapFrame:SetScript("OnHide", function(self)
+        print("[Magnify Debug] WorldMapFrame OnHide triggered, GameTooltip visible:", GameTooltip:IsShown())
+        if GameTooltip:IsShown() then
+            print("[Magnify Debug] Forcing GameTooltip:Hide() on map close")
+            GameTooltip:Hide()
+        end
+        if original_WorldMapFrame_OnHide then
+            original_WorldMapFrame_OnHide(self)
+        end
     end)
 
     -- Create class color textures for party and raid frames
@@ -696,6 +728,50 @@ function Magnify.OnFirstLoad()
         Magnify.CreateClassColorIcon(_G["WorldMapParty" .. i]);
         Magnify.CreateClassColorIcon(_G["WorldMapRaid" .. i]);
     end
+    
+    -- Debug: Hook POI button events to track tooltip behavior
+    print("[Magnify Debug] Setting up POI button event hooks")
+    local function hookPOIButton(button)
+        if button and not button.magnifyHooked then
+            button.magnifyHooked = true
+            
+            -- Store original scripts if they exist
+            local originalOnEnter = button:GetScript("OnEnter")
+            local originalOnLeave = button:GetScript("OnLeave")
+            
+            button:SetScript("OnEnter", function(self)
+                print("[Magnify Debug] POI OnEnter:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
+                if originalOnEnter then
+                    originalOnEnter(self)
+                end
+            end)
+            
+            button:SetScript("OnLeave", function(self)
+                print("[Magnify Debug] POI OnLeave:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
+                if originalOnLeave then
+                    originalOnLeave(self)
+                end
+                -- Force hide tooltip
+                if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
+                    print("[Magnify Debug] Forcing GameTooltip:Hide()")
+                    GameTooltip:Hide()
+                end
+            end)
+        end
+    end
+    
+    -- Hook existing POI buttons
+    for i = 1, 4 do
+        for j = 1, 25 do
+            local buttonName = "poiWorldMapPOIFrame" .. i .. "_" .. j
+            local button = _G[buttonName]
+            if button then
+                hookPOIButton(button)
+            end
+        end
+    end
+    
+    print("[Magnify Debug] OnFirstLoad completed")
 end
 
 function Magnify.OnEvent(self, event, addonName)
