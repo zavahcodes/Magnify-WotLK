@@ -672,6 +672,11 @@ function Magnify.HookPOIButton(button)
         -- Store original scripts if they exist
         local originalOnEnter = button:GetScript("OnEnter")
         local originalOnLeave = button:GetScript("OnLeave")
+        local originalOnUpdate = button:GetScript("OnUpdate")
+        
+        print("[Magnify Debug]   - Has OnEnter script:", originalOnEnter ~= nil)
+        print("[Magnify Debug]   - Has OnLeave script:", originalOnLeave ~= nil)
+        print("[Magnify Debug]   - Has OnUpdate script:", originalOnUpdate ~= nil)
         
         button:SetScript("OnEnter", function(self)
             print("[Magnify Debug] *** POI OnEnter:", self:GetName(), "GameTooltip:IsShown():", GameTooltip:IsShown())
@@ -697,6 +702,22 @@ function Magnify.HookPOIButton(button)
                 end
             end
         end)
+        
+        -- Hook OnUpdate to catch tooltip appearance
+        if originalOnUpdate then
+            button:SetScript("OnUpdate", function(self, elapsed)
+                originalOnUpdate(self, elapsed)
+                -- Check if tooltip appeared
+                if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
+                    if not self.magnifyTooltipShown then
+                        self.magnifyTooltipShown = true
+                        print("[Magnify Debug] !!! Tooltip appeared via OnUpdate for:", self:GetName())
+                    end
+                else
+                    self.magnifyTooltipShown = false
+                end
+            end)
+        end
     end
 end
 
@@ -707,6 +728,38 @@ function Magnify.OnFirstLoad()
     MagnifyOptions.enableOldPartyIcons = MagnifyOptions.enableOldPartyIcons or Magnify.ENABLEOLDPARTYICONS_DEFAULT
     MagnifyOptions.maxZoom = MagnifyOptions.maxZoom or Magnify.MAXZOOM_DEFAULT
     MagnifyOptions.zoomStep = MagnifyOptions.zoomStep or Magnify.ZOOMSTEP_DEFAULT
+
+    -- Debug: Hook GameTooltip to track when it's shown/hidden
+    local originalShow = GameTooltip.Show
+    local originalHide = GameTooltip.Hide
+    local originalSetOwner = GameTooltip.SetOwner
+    
+    GameTooltip.Show = function(self)
+        local owner = self:GetOwner()
+        local ownerName = owner and owner:GetName() or "nil"
+        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
+            print("[Magnify Debug] >>> GameTooltip:Show() called for POI:", ownerName)
+            print("[Magnify Debug] >>> Stack trace:", debugstack(2, 3, 3))
+        end
+        return originalShow(self)
+    end
+    
+    GameTooltip.Hide = function(self)
+        local owner = self:GetOwner()
+        local ownerName = owner and owner:GetName() or "nil"
+        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
+            print("[Magnify Debug] <<< GameTooltip:Hide() called for POI:", ownerName)
+        end
+        return originalHide(self)
+    end
+    
+    GameTooltip.SetOwner = function(self, owner, ...)
+        local ownerName = owner and owner:GetName() or "nil"
+        if ownerName and string.find(ownerName, "poiWorldMapPOIFrame") then
+            print("[Magnify Debug] >>> GameTooltip:SetOwner() called for POI:", ownerName)
+        end
+        return originalSetOwner(self, owner, ...)
+    end
 
     WorldMapScrollFrame:SetScrollChild(WorldMapDetailFrame)
     WorldMapScrollFrame:SetScript("OnMouseWheel", Magnify.WorldMapScrollFrame_OnMouseWheel)
