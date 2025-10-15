@@ -334,6 +334,33 @@ function Magnify.WorldMapButton_OnUpdate(self, elapsed)
     Magnify.tooltipCheckTimer = Magnify.tooltipCheckTimer + elapsed
     if Magnify.tooltipCheckTimer > 0.5 then  -- Check every 0.5 seconds
         Magnify.tooltipCheckTimer = 0
+        
+        -- Check all possible tooltip frames
+        local tooltipFrames = {
+            GameTooltip,
+            WorldMapTooltip,
+            QuestMapLogDetailScrollChildFrame,
+        }
+        
+        for _, tooltip in ipairs(tooltipFrames) do
+            if tooltip and tooltip:IsShown() then
+                local frameName = tooltip:GetName() or "UnnamedTooltip"
+                local owner = tooltip.GetOwner and tooltip:GetOwner() or nil
+                local ownerName = owner and owner:GetName() or "nil"
+                print("[Magnify Debug] !!! VISIBLE TOOLTIP DETECTED:", frameName, "Owner:", ownerName, "IsMouseOver:", owner and owner:IsMouseOver() or "N/A")
+                
+                -- Check if the owner is a POI button
+                if ownerName and (string.find(ownerName, "poiWorldMapPOIFrame") or ownerName == "poiWorldMapPOIFrame_Swap") then
+                    -- Check if mouse is still over the POI
+                    if owner and not owner:IsMouseOver() then
+                        print("[Magnify Debug] !!! STUCK TOOLTIP - Forcing hide on:", frameName)
+                        tooltip:Hide()
+                    end
+                end
+            end
+        end
+        
+        -- Also check if GameTooltip is shown
         if GameTooltip:IsShown() then
             local owner = GameTooltip:GetOwner()
             local ownerName = owner and owner:GetName() or "nil"
@@ -684,6 +711,9 @@ function Magnify.HookPOIButton(button)
                 originalOnEnter(self)
             end
             print("[Magnify Debug] *** After OnEnter, GameTooltip:IsShown():", GameTooltip:IsShown(), "Owner:", GameTooltip:GetOwner() and GameTooltip:GetOwner():GetName() or "nil")
+            
+            -- Schedule a check after a short delay to see what tooltip appeared
+            self.tooltipCheckTime = GetTime() + 0.1
         end)
         
         button:SetScript("OnLeave", function(self)
@@ -704,20 +734,64 @@ function Magnify.HookPOIButton(button)
         end)
         
         -- Hook OnUpdate to catch tooltip appearance
-        if originalOnUpdate then
-            button:SetScript("OnUpdate", function(self, elapsed)
+        local newOnUpdate = function(self, elapsed)
+            if originalOnUpdate then
                 originalOnUpdate(self, elapsed)
-                -- Check if tooltip appeared
-                if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
-                    if not self.magnifyTooltipShown then
-                        self.magnifyTooltipShown = true
-                        print("[Magnify Debug] !!! Tooltip appeared via OnUpdate for:", self:GetName())
+            end
+            
+            -- Check for tooltip appearance after OnEnter
+            if self.tooltipCheckTime and GetTime() >= self.tooltipCheckTime then
+                self.tooltipCheckTime = nil
+                
+                -- Search for any visible tooltip-like frames
+                print("[Magnify Debug] === Searching for visible tooltips after OnEnter...")
+                
+                -- Check common tooltip frames
+                local tooltipsToCheck = {
+                    "GameTooltip",
+                    "WorldMapTooltip", 
+                    "QuestMapLogDetailScrollChildFrame",
+                    "ShoppingTooltip1",
+                    "ShoppingTooltip2",
+                }
+                
+                for _, name in ipairs(tooltipsToCheck) do
+                    local frame = _G[name]
+                    if frame and frame:IsShown() then
+                        print("[Magnify Debug] === FOUND VISIBLE:", name, "Owner:", frame.GetOwner and frame:GetOwner() and frame:GetOwner():GetName() or "N/A")
                     end
-                else
-                    self.magnifyTooltipShown = false
                 end
-            end)
+                
+                -- Also check WorldMapFrame children for visible frames
+                local found = false
+                for i = 1, WorldMapFrame:GetNumChildren() do
+                    local child = select(i, WorldMapFrame:GetChildren())
+                    if child and child:IsShown() and child:GetObjectType() == "Frame" then
+                        local childName = child:GetName()
+                        if childName and (string.find(childName:lower(), "tooltip") or string.find(childName:lower(), "poi")) then
+                            print("[Magnify Debug] === FOUND WORLDMAP CHILD:", childName, "Type:", child:GetObjectType())
+                            found = true
+                        end
+                    end
+                end
+                
+                if not found then
+                    print("[Magnify Debug] === No visible tooltips found!")
+                end
+            end
+            
+            -- Check if tooltip appeared
+            if GameTooltip:IsShown() and GameTooltip:GetOwner() == self then
+                if not self.magnifyTooltipShown then
+                    self.magnifyTooltipShown = true
+                    print("[Magnify Debug] !!! Tooltip appeared via OnUpdate for:", self:GetName())
+                end
+            else
+                self.magnifyTooltipShown = false
+            end
         end
+        
+        button:SetScript("OnUpdate", newOnUpdate)
     end
 end
 
