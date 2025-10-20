@@ -85,10 +85,11 @@ end
 
 function Magnify.AfterScrollOrPan()
     Magnify.PersistMapScrollAndPan()
-    if (WORLDMAP_SETTINGS.selectedQuest) then
-        WorldMapBlobFrame:DrawQuestBlob(WORLDMAP_SETTINGS.selectedQuestId, false);
-        WorldMapBlobFrame:DrawQuestBlob(WORLDMAP_SETTINGS.selectedQuestId, true);
-    end
+    -- Blobs are disabled in Magnify, no need to redraw them
+    -- if (WORLDMAP_SETTINGS.selectedQuest) then
+    --     WorldMapBlobFrame:DrawQuestBlob(WORLDMAP_SETTINGS.selectedQuestId, false);
+    --     WorldMapBlobFrame:DrawQuestBlob(WORLDMAP_SETTINGS.selectedQuestId, true);
+    -- end
 end
 
 function Magnify.ResizeQuestPOIs()
@@ -125,7 +126,8 @@ function Magnify.SetDetailFrameScale(num)
 
     -- Adjust frames to inversely scale with the detail frame so they maintain relative screen size
     WorldMapPOIFrame:SetScale(1 / WORLDMAP_SETTINGS.size)
-    WorldMapBlobFrame:SetScale(num)
+    -- Fix blob positioning by scaling inversely like POIs to maintain correct position during zoom/pan
+    WorldMapBlobFrame:SetScale(1 / num)
 
     WorldMapPlayer:SetScale(1 / WorldMapDetailFrame:GetScale())
     WorldMapDeathRelease:SetScale(1 / WorldMapDetailFrame:GetScale())
@@ -669,6 +671,17 @@ function Magnify.OnFirstLoad()
     MagnifyOptions.maxZoom = MagnifyOptions.maxZoom or Magnify.MAXZOOM_DEFAULT
     MagnifyOptions.zoomStep = MagnifyOptions.zoomStep or Magnify.ZOOMSTEP_DEFAULT
 
+    -- Hide blobs completely: override functions to prevent any addon from showing them
+    WorldMapBlobFrame:SetAlpha(0)
+    WorldMapBlobFrame:EnableMouse(false)
+    WorldMapBlobFrame:Hide()
+    
+    -- Override blob functions to prevent them from being shown or drawn
+    WorldMapBlobFrame.Show = function() end
+    WorldMapBlobFrame.SetAlpha = function() end
+    WorldMapBlobFrame.DrawQuestBlob = function() end
+    WorldMapBlobFrame.DrawBlob = function() end
+    
     WorldMapScrollFrame:SetScrollChild(WorldMapDetailFrame)
     WorldMapScrollFrame:SetScript("OnMouseWheel", Magnify.WorldMapScrollFrame_OnMouseWheel)
     WorldMapButton:SetScript("OnMouseDown", Magnify.WorldMapButton_OnMouseDown)
